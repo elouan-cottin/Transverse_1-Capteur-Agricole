@@ -1,1 +1,119 @@
+/* =========================
+   CAROUSEL (scroll manuel + drag)
+   + fade via mask (ne masque pas les cartes)
+   ========================= */
 
+.carousel {
+  width: 100%;
+  min-width: 0;
+
+  padding: 12px;
+  margin-bottom: var(--gap);
+
+  overflow-x: auto;
+  overflow-y: hidden;
+  position: relative;
+
+  height: 270px;
+  max-height: 270px;
+
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+
+  scrollbar-width: none;
+  /* Firefox */
+  cursor: grab;
+}
+
+.carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.carousel.dragging {
+  cursor: grabbing;
+}
+
+/* 🚫 Empêche sélection dans le carousel */
+.carousel,
+.carousel * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Empêche le drag "fantôme" sur images (Chrome/Safari) */
+.carousel img {
+  -webkit-user-drag: none;
+}
+
+/* ✅ Fade propre sur les bords (n'intercepte rien, ne recouvre pas) */
+.carousel {
+  -webkit-mask-image: linear-gradient(90deg,
+      transparent 0px,
+      #000 48px,
+      #000 calc(100% - 48px),
+      transparent 100%);
+  mask-image: linear-gradient(90deg,
+      transparent 0px,
+      #000 48px,
+      #000 calc(100% - 48px),
+      transparent 100%);
+}
+
+/* Track : 1 seule ligne */
+.carousel-track {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--gap);
+  width: max-content;
+  align-items: stretch;
+  padding-bottom: 2px;
+}
+
+/* Cartes sondes */
+.sonde-card.compact {
+  width: 270px;
+  min-width: 270px;
+  flex: 0 0 auto;
+
+  height: auto;
+  align-self: stretch;
+
+  padding: var(--pad);
+  overflow: hidden;
+}
+
+/* Contenu carte */
+.sonde-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.sonde-name {
+  font-weight: 800
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .02);
+}
+
+.metric .k {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.metric .v {
+  font-size: 20px;
+  font-weight: 800;
+  margin-top: 2px;
+}
