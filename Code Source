@@ -2,232 +2,245 @@
 #include <PubSubClient.h>
 #include <SimpleDHT.h>
 
+#define uS_TO_S_FACTOR 1000000ULL
+
 // =========================
-//  CONFIG WIFI (OK)
+//  WIFI
 // =========================
 const char* ssid     = "Capteur-Agri";
 const char* password = "Capteur-Agri";
 
 // =========================
-//  CONFIG MQTT
+//  MQTT
 // =========================
-const char* mqtt_server = "10.42.0.1";  // IP du Raspberry (hotspot)
+const char* mqtt_server = "10.42.0.1";
 const int   mqtt_port   = 1883;
-
-// ID UNIQUE DE LA SONDE (change pour chaque ESP32)
-const char* SONDE_ID = "sonde1";
+const char* SONDE_ID    = "sonde1";
 
 // =========================
 //  PINS
 // =========================
-const int PIN_DHT11 = 4;   // DHT11 OUT -> GPIO4
-const int PIN_LDR   = 34;  // LDR -> GPIO34 (ADC)
-const int PIN_MQ135 = 35;  // MQ135 AO -> GPIO35 (ADC)
-const int PIN_SOIL  = 32;  // Hygrometer AO -> GPIO32 (ADC)
+const int PIN_DHT11 = 4;
+const int PIN_LDR   = 34;
+const int PIN_MQ135 = 35;
+const int PIN_SOIL  = 32;
 
 // =========================
 //  SOIL calibration
 // =========================
-const int SOIL_DRY = 2590; // air
-const int SOIL_WET = 900;  // sol mouillé
+const int SOIL_DRY = 2590;
+const int SOIL_WET = 900;
 
 // =========================
-//  MQ135 baseline (RELATIF)
+//  DAY / NIGHT thresholds
 // =========================
-const unsigned long MQ_SAMPLE_MS = 200;
-const int MQ_AVG_WINDOW = 20; // 4s de lissage
-int mqSamples[MQ_AVG_WINDOW];
-int mqIdx = 0;
-long mqSum = 0;
+const int LUX_JOUR = 1500;
+const int LUX_NUIT = 1000;
 
-bool mqBaselineReady = false;
-unsigned long mqT0 = 0;
-long mqBaselineSum = 0;
-int mqBaselineCount = 0;
-int mqBaseline = 0;
+// =========================
+//  TIMINGS
+// =========================
+const uint32_t SEND_JOUR_MS = 30UL * 1000UL; // jour: envoi toutes les 30s
+const uint32_t SLEEP_NUIT_S = 1800;          // nuit: deep sleep 30 min
+
+// Anti-bascule jour->nuit (3 mesures consécutives)
+const int NIGHT_STREAK_REQUIRED = 3;
+
+// Backoff si WiFi/MQTT KO (évite de marteler le hotspot)
+const uint32_t SLEEP_WIFI_FAIL_S = 120; // 2 min
 
 // =========================
 WiFiClient espClient;
 PubSubClient client(espClient);
 SimpleDHT11 dht11(PIN_DHT11);
 
-// -------------------------
+// =========================
 int soilPercentFromRaw(int raw) {
   int pct = map(raw, SOIL_DRY, SOIL_WET, 0, 100);
   return constrain(pct, 0, 100);
 }
 
-int mqReadAvg() {
-  int v = analogRead(PIN_MQ135);
-
-  mqSum -= mqSamples[mqIdx];
-  mqSamples[mqIdx] = v;
-  mqSum += v;
-  mqIdx = (mqIdx + 1) % MQ_AVG_WINDOW;
-
-  return (int)(mqSum / MQ_AVG_WINDOW);
-}
-
 String buildTopic() {
-  String topic = "eco/sondes/";
-  topic += SONDE_ID;
-  topic += "/mesures";
-  return topic;
+  return String("eco/sondes/") + SONDE_ID + "/mesures";
 }
 
-// -------------------------
-void ensureWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
+// Nettoyage WiFi propre (important pour hotspot Linux)
+void wifiOffClean() {
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+}
 
-  Serial.print("Connexion WiFi: ");
-  Serial.println(ssid);
+// Connexion WiFi robuste
+bool connectWiFi(uint32_t timeoutMs = 15000) {
+  if (WiFi.status() == WL_CONNECTED) return true;
 
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
   WiFi.mode(WIFI_STA);
+
+  // Nettoyage fort (évite état WiFi bloqué)
+  WiFi.disconnect(true, true);
+  delay(200);
+
+  Serial.print("WiFi -> ");
+  Serial.println(ssid);
   WiFi.begin(ssid, password);
 
-  unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
-    delay(500);
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) {
+    delay(300);
     Serial.print(".");
   }
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("WiFi OK, IP ESP32: ");
+    Serial.print("WiFi OK, IP = ");
     Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("WiFi ECHEC (timeout).");
+    Serial.print("RSSI = ");
+    Serial.println(WiFi.RSSI());
+    return true;
   }
+
+  Serial.println("WiFi ECHEC");
+  return false;
 }
 
-void ensureMQTT() {
-  if (client.connected()) return;
+// Connexion MQTT robuste
+bool connectMQTT(uint32_t timeoutMs = 8000) {
+  client.setServer(mqtt_server, mqtt_port);
+  if (client.connected()) return true;
 
-  while (!client.connected()) {
-    Serial.print("Connexion MQTT...");
+  Serial.print("MQTT...");
+  uint32_t t0 = millis();
+  while (!client.connected() && millis() - t0 < timeoutMs) {
     if (client.connect(SONDE_ID)) {
       Serial.println(" OK");
-    } else {
-      Serial.print(" ECHEC, code=");
-      Serial.print(client.state());
-      Serial.println(" -> retry 3s");
-      delay(3000);
+      return true;
     }
+    Serial.print(" fail=");
+    Serial.println(client.state());
+    delay(1000);
+  }
+  Serial.println(" MQTT ECHEC");
+  return false;
+}
+
+void deepSleepSeconds(uint32_t seconds) {
+  Serial.print("Deep sleep ");
+  Serial.print(seconds);
+  Serial.println(" s");
+  wifiOffClean();
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * uS_TO_S_FACTOR);
+  delay(200);
+  esp_deep_sleep_start();
+}
+
+void publishOnce(const char* modeLabel) {
+  byte t = 0, h = 0;
+  int dhtErr = dht11.read(&t, &h, NULL);
+
+  int lumRaw  = analogRead(PIN_LDR);
+  int soilRaw = analogRead(PIN_SOIL);
+  int soilPct = soilPercentFromRaw(soilRaw);
+
+  long mqSum = 0;
+  for (int i = 0; i < 20; i++) {
+    mqSum += analogRead(PIN_MQ135);
+    delay(20);
+  }
+  int mqRaw = mqSum / 20;
+
+  String payload = "{";
+  payload += "\"id\":\"" + String(SONDE_ID) + "\"";
+  payload += ",\"mode\":\"" + String(modeLabel) + "\"";
+
+  if (dhtErr == SimpleDHTErrSuccess) {
+    payload += ",\"temp\":" + String((int)t);
+    payload += ",\"hum_air\":" + String((int)h);
+  } else {
+    payload += ",\"dht_err\":" + String(dhtErr);
+  }
+
+  payload += ",\"lum_raw\":" + String(lumRaw);
+  payload += ",\"soil_pct\":" + String(soilPct);
+  payload += ",\"mq_raw\":" + String(mqRaw);
+  payload += "}";
+
+  Serial.println(payload);
+
+  if (client.connected()) {
+    client.publish(buildTopic().c_str(), payload.c_str());
+    Serial.println("MQTT envoyé");
   }
 }
 
+// =========================
 void setup() {
   Serial.begin(115200);
   delay(300);
 
-  Serial.println();
-  Serial.println("=== SONDE ESP32 -> MQTT ===");
+  Serial.println("\n=== SONDE ESP32 (fix WiFi + deep sleep nuit) ===");
   Serial.print("ID: ");
   Serial.println(SONDE_ID);
 
-  // Init MQ average buffer
-  int v = analogRead(PIN_MQ135);
-  for (int i = 0; i < MQ_AVG_WINDOW; i++) {
-    mqSamples[i] = v;
-    mqSum += v;
+  delay(200);
+  int lum0 = analogRead(PIN_LDR);
+
+  bool isNight = (lum0 <= LUX_NUIT);
+  bool isDay   = (lum0 >= LUX_JOUR);
+  if (!isNight && !isDay) isNight = true; // zone grise -> nuit
+
+  Serial.print("Luminosite start = ");
+  Serial.print(lum0);
+  Serial.print(" -> ");
+  Serial.println(isNight ? "NUIT" : "JOUR");
+
+  bool wifiOK = connectWiFi();
+  bool mqttOK = wifiOK && connectMQTT();
+
+  // Si réseau KO -> backoff pour ne pas saturer le hotspot
+  if (!mqttOK) {
+    Serial.println("Réseau KO -> backoff");
+    deepSleepSeconds(SLEEP_WIFI_FAIL_S);
   }
-  mqT0 = millis();
 
-  ensureWiFi();
-  client.setServer(mqtt_server, mqtt_port);
+  // ===== NUIT =====
+  if (isNight) {
+    publishOnce("night");
+    deepSleepSeconds(SLEEP_NUIT_S);
+  }
 
-  Serial.println("MQ135: chauffe 60s pour baseline (ne pas souffler dessus)");
+  // ===== JOUR =====
+  Serial.println("Mode JOUR (envoi toutes les 30 s)");
 }
 
+// =========================
 void loop() {
-  ensureWiFi();
-  if (WiFi.status() == WL_CONNECTED) {
-    ensureMQTT();
-    client.loop();
-  }
-
-  // Cadence d’envoi
   static unsigned long lastSend = 0;
-  const unsigned long SEND_MS = 5000;
+  static int nightStreak = 0;
 
-  // Maintien baseline MQ135 entre 2 envois
-  static unsigned long lastMq = 0;
-  if (millis() - lastMq >= MQ_SAMPLE_MS) {
-    lastMq = millis();
-    int mq = mqReadAvg();
+  client.loop();
 
-    if (!mqBaselineReady) {
-      mqBaselineSum += mq;
-      mqBaselineCount++;
-      if (millis() - mqT0 >= 60000) {
-        mqBaseline = (int)(mqBaselineSum / mqBaselineCount);
-        mqBaselineReady = true;
-        Serial.print("MQ135 baseline = ");
-        Serial.println(mqBaseline);
-      }
+  if (millis() - lastSend >= SEND_JOUR_MS) {
+    lastSend = millis();
+
+    int lum = analogRead(PIN_LDR);
+    Serial.print("Check lum = ");
+    Serial.println(lum);
+
+    if (lum <= LUX_NUIT) nightStreak++;
+    else nightStreak = 0;
+
+    publishOnce("day");
+
+    // Bascule vers la nuit si confirmé
+    if (nightStreak >= NIGHT_STREAK_REQUIRED) {
+      Serial.println("Nuit confirmee -> deep sleep");
+      publishOnce("night");
+      deepSleepSeconds(SLEEP_NUIT_S);
     }
   }
 
-  if (millis() - lastSend < SEND_MS) return;
-  lastSend = millis();
-
-  // -------- Lectures capteurs --------
-  byte t = 0, h = 0;
-  int dhtErr = dht11.read(&t, &h, NULL);
-
-  int ldrRaw = analogRead(PIN_LDR);
-
-  int soilRaw = analogRead(PIN_SOIL);
-  int soilPct = soilPercentFromRaw(soilRaw);
-
-  int mq = mqReadAvg();
-  int mqDelta = mqBaselineReady ? (mq - mqBaseline) : 0;
-
-  // -------- JSON --------
-  String payload = "{";
-  payload += "\"id\":\""; payload += SONDE_ID; payload += "\"";
-
-  if (dhtErr == SimpleDHTErrSuccess) {
-    payload += ",\"temp\":";
-    payload += String((int)t);
-    payload += ",\"hum_air\":";
-    payload += String((int)h);
-  } else {
-    payload += ",\"dht_err\":";
-    payload += String(dhtErr);
-  }
-
-  payload += ",\"lum_raw\":";
-  payload += String(ldrRaw);
-
-  payload += ",\"soil_raw\":";
-  payload += String(soilRaw);
-  payload += ",\"soil_pct\":";
-  payload += String(soilPct);
-
-  payload += ",\"mq_raw\":";
-  payload += String(mq);
-  payload += ",\"mq_base\":";
-  payload += String(mqBaselineReady ? mqBaseline : -1);
-  payload += ",\"mq_delta\":";
-  payload += String(mqBaselineReady ? mqDelta : 0);
-
-  payload += "}";
-
-  // -------- Publish --------
-  if (WiFi.status() == WL_CONNECTED && client.connected()) {
-    String topic = buildTopic();
-    bool ok = client.publish(topic.c_str(), payload.c_str());
-
-    Serial.print("MQTT --> ");
-    Serial.print(topic);
-    Serial.print(" : ");
-    Serial.println(payload);
-
-    if (!ok) Serial.println("⚠ Erreur publication MQTT");
-  } else {
-    Serial.print("Pas de publish (WiFi/MQTT KO) : ");
-    Serial.println(payload);
-  }
+  delay(50);
 }
-
