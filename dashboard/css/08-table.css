@@ -1,1 +1,40 @@
+/* Le wrapper devient une "zone scroll" */
+.table-wrap{
+  overflow: auto;
+  max-height: 420px;              /* ✅ ajuste la hauteur à ton goût */
+  border-radius: 14px;
+}
+
+/* Table */
+table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+}
+
+th,td{
+  text-align:left;
+  padding:10px 10px;
+  border-bottom:1px solid var(--border);
+  font-size:13px;
+}
+
+th{
+  color:var(--muted);
+  font-weight:700;
+}
+
+/* Hover */
+tbody tr:hover td{
+  background: rgba(255,255,255,.02);
+}
+
+/* ✅ Optionnel : header sticky quand tu scroll dans le tableau */
+thead th{
+  position: sticky;
+  top: 0;
+  /*z-index: 1;*/
+  background: rgba(15,26,46,.92);
+  backdrop-filter: blur(6px);
+}
 
