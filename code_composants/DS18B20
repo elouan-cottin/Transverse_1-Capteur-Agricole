@@ -1,1 +1,24 @@
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
+#define ONE_WIRE_BUS D5  // GPIO2
+
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+void setup() {
+  Serial.begin(115200);
+  sensors.begin();
+  Serial.println("Test DS18B20...");
+}
+
+void loop() {
+  sensors.requestTemperatures(); 
+  float tempC = sensors.getTempCByIndex(0);
+
+  Serial.print("Température : ");
+  Serial.print(tempC);
+  Serial.println(" °C");
+
+  delay(1000);
+}
