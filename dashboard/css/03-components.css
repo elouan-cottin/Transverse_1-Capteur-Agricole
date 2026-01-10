@@ -1,1 +1,86 @@
+/* Cards / blocks */
+.card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .02));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
 
+.block {
+    padding: var(--pad);
+}
+
+.block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.pill {
+    font-size: 12px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+}
+
+/* Buttons */
+button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    border: none;
+    background: none;
+}
+
+.primary {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(46, 204, 113, .14);
+    border: 1px solid rgba(46, 204, 113, .25);
+}
+
+.ghost {
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, .02);
+    color: var(--muted);
+}
+
+/* Badges */
+.badge {
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, .03);
+    color: var(--muted);
+}
+
+.badge.ok {
+    color: #b9ffcf;
+    border-color: rgba(46, 204, 113, .25);
+    background: rgba(46, 204, 113, .08)
+}
+
+.badge.off {
+    color: #ffd0cc;
+    border-color: rgba(231, 76, 60, .25);
+    background: rgba(231, 76, 60, .08)
+}
+
+.badge.cal {
+    color: #ffe7a8;
+    border-color: rgba(241, 196, 15, .25);
+    background: rgba(241, 196, 15, .08)
+}
+
+/* Placeholders charts */
+.chart-placeholder {
+    height: 160px;
+    border-radius: 14px;
+    border: 1px dashed rgba(255, 255, 255, .18);
+    background: linear-gradient(90deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .015), rgba(255, 255, 255, .04));
+}
