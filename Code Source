@@ -1,1 +1,233 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <SimpleDHT.h>
+
+// =========================
+//  CONFIG WIFI (OK)
+// =========================
+const char* ssid     = "Capteur-Agri";
+const char* password = "Capteur-Agri";
+
+// =========================
+//  CONFIG MQTT
+// =========================
+const char* mqtt_server = "10.42.0.1";  // IP du Raspberry (hotspot)
+const int   mqtt_port   = 1883;
+
+// ID UNIQUE DE LA SONDE (change pour chaque ESP32)
+const char* SONDE_ID = "sonde1";
+
+// =========================
+//  PINS
+// =========================
+const int PIN_DHT11 = 4;   // DHT11 OUT -> GPIO4
+const int PIN_LDR   = 34;  // LDR -> GPIO34 (ADC)
+const int PIN_MQ135 = 35;  // MQ135 AO -> GPIO35 (ADC)
+const int PIN_SOIL  = 32;  // Hygrometer AO -> GPIO32 (ADC)
+
+// =========================
+//  SOIL calibration
+// =========================
+const int SOIL_DRY = 2590; // air
+const int SOIL_WET = 900;  // sol mouillé
+
+// =========================
+//  MQ135 baseline (RELATIF)
+// =========================
+const unsigned long MQ_SAMPLE_MS = 200;
+const int MQ_AVG_WINDOW = 20; // 4s de lissage
+int mqSamples[MQ_AVG_WINDOW];
+int mqIdx = 0;
+long mqSum = 0;
+
+bool mqBaselineReady = false;
+unsigned long mqT0 = 0;
+long mqBaselineSum = 0;
+int mqBaselineCount = 0;
+int mqBaseline = 0;
+
+// =========================
+WiFiClient espClient;
+PubSubClient client(espClient);
+SimpleDHT11 dht11(PIN_DHT11);
+
+// -------------------------
+int soilPercentFromRaw(int raw) {
+  int pct = map(raw, SOIL_DRY, SOIL_WET, 0, 100);
+  return constrain(pct, 0, 100);
+}
+
+int mqReadAvg() {
+  int v = analogRead(PIN_MQ135);
+
+  mqSum -= mqSamples[mqIdx];
+  mqSamples[mqIdx] = v;
+  mqSum += v;
+  mqIdx = (mqIdx + 1) % MQ_AVG_WINDOW;
+
+  return (int)(mqSum / MQ_AVG_WINDOW);
+}
+
+String buildTopic() {
+  String topic = "eco/sondes/";
+  topic += SONDE_ID;
+  topic += "/mesures";
+  return topic;
+}
+
+// -------------------------
+void ensureWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  Serial.print("Connexion WiFi: ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi OK, IP ESP32: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi ECHEC (timeout).");
+  }
+}
+
+void ensureMQTT() {
+  if (client.connected()) return;
+
+  while (!client.connected()) {
+    Serial.print("Connexion MQTT...");
+    if (client.connect(SONDE_ID)) {
+      Serial.println(" OK");
+    } else {
+      Serial.print(" ECHEC, code=");
+      Serial.print(client.state());
+      Serial.println(" -> retry 3s");
+      delay(3000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  Serial.println();
+  Serial.println("=== SONDE ESP32 -> MQTT ===");
+  Serial.print("ID: ");
+  Serial.println(SONDE_ID);
+
+  // Init MQ average buffer
+  int v = analogRead(PIN_MQ135);
+  for (int i = 0; i < MQ_AVG_WINDOW; i++) {
+    mqSamples[i] = v;
+    mqSum += v;
+  }
+  mqT0 = millis();
+
+  ensureWiFi();
+  client.setServer(mqtt_server, mqtt_port);
+
+  Serial.println("MQ135: chauffe 60s pour baseline (ne pas souffler dessus)");
+}
+
+void loop() {
+  ensureWiFi();
+  if (WiFi.status() == WL_CONNECTED) {
+    ensureMQTT();
+    client.loop();
+  }
+
+  // Cadence d’envoi
+  static unsigned long lastSend = 0;
+  const unsigned long SEND_MS = 5000;
+
+  // Maintien baseline MQ135 entre 2 envois
+  static unsigned long lastMq = 0;
+  if (millis() - lastMq >= MQ_SAMPLE_MS) {
+    lastMq = millis();
+    int mq = mqReadAvg();
+
+    if (!mqBaselineReady) {
+      mqBaselineSum += mq;
+      mqBaselineCount++;
+      if (millis() - mqT0 >= 60000) {
+        mqBaseline = (int)(mqBaselineSum / mqBaselineCount);
+        mqBaselineReady = true;
+        Serial.print("MQ135 baseline = ");
+        Serial.println(mqBaseline);
+      }
+    }
+  }
+
+  if (millis() - lastSend < SEND_MS) return;
+  lastSend = millis();
+
+  // -------- Lectures capteurs --------
+  byte t = 0, h = 0;
+  int dhtErr = dht11.read(&t, &h, NULL);
+
+  int ldrRaw = analogRead(PIN_LDR);
+
+  int soilRaw = analogRead(PIN_SOIL);
+  int soilPct = soilPercentFromRaw(soilRaw);
+
+  int mq = mqReadAvg();
+  int mqDelta = mqBaselineReady ? (mq - mqBaseline) : 0;
+
+  // -------- JSON --------
+  String payload = "{";
+  payload += "\"id\":\""; payload += SONDE_ID; payload += "\"";
+
+  if (dhtErr == SimpleDHTErrSuccess) {
+    payload += ",\"temp\":";
+    payload += String((int)t);
+    payload += ",\"hum_air\":";
+    payload += String((int)h);
+  } else {
+    payload += ",\"dht_err\":";
+    payload += String(dhtErr);
+  }
+
+  payload += ",\"lum_raw\":";
+  payload += String(ldrRaw);
+
+  payload += ",\"soil_raw\":";
+  payload += String(soilRaw);
+  payload += ",\"soil_pct\":";
+  payload += String(soilPct);
+
+  payload += ",\"mq_raw\":";
+  payload += String(mq);
+  payload += ",\"mq_base\":";
+  payload += String(mqBaselineReady ? mqBaseline : -1);
+  payload += ",\"mq_delta\":";
+  payload += String(mqBaselineReady ? mqDelta : 0);
+
+  payload += "}";
+
+  // -------- Publish --------
+  if (WiFi.status() == WL_CONNECTED && client.connected()) {
+    String topic = buildTopic();
+    bool ok = client.publish(topic.c_str(), payload.c_str());
+
+    Serial.print("MQTT --> ");
+    Serial.print(topic);
+    Serial.print(" : ");
+    Serial.println(payload);
+
+    if (!ok) Serial.println("⚠ Erreur publication MQTT");
+  } else {
+    Serial.print("Pas de publish (WiFi/MQTT KO) : ");
+    Serial.println(payload);
+  }
+}
 
