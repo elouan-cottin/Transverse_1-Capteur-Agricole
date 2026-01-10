@@ -40,21 +40,20 @@ const int LUX_NUIT = 1000;
 // =========================
 //  TIMINGS
 // =========================
-const uint32_t SEND_JOUR_MS = 30UL * 1000UL; // jour: envoi toutes les 30s
-const uint32_t SLEEP_NUIT_S = 1800;          // nuit: deep sleep 30 min
-
-// Anti-bascule jour->nuit (3 mesures consécutives)
-const int NIGHT_STREAK_REQUIRED = 3;
-
-// Backoff si WiFi/MQTT KO (évite de marteler le hotspot)
-const uint32_t SLEEP_WIFI_FAIL_S = 120; // 2 min
+const uint32_t SEND_JOUR_MS      = 30UL * 1000UL; // jour: envoi toutes les 30s
+const uint32_t SLEEP_NUIT_S      = 1800;          // nuit: deep sleep 30 min
+const uint32_t WIFI_RETRY_MS     = 60UL * 1000UL; // priorité: 1 essai/min si pas connecté
+const int NIGHT_STREAK_REQUIRED  = 3;             // bascule jour->nuit confirmée
 
 // =========================
 WiFiClient espClient;
 PubSubClient client(espClient);
 SimpleDHT11 dht11(PIN_DHT11);
 
-// =========================
+// Etat réseau
+bool netReady = false; // WiFi + MQTT OK
+
+// -------------------------
 int soilPercentFromRaw(int raw) {
   int pct = map(raw, SOIL_DRY, SOIL_WET, 0, 100);
   return constrain(pct, 0, 100);
@@ -64,22 +63,20 @@ String buildTopic() {
   return String("eco/sondes/") + SONDE_ID + "/mesures";
 }
 
-// Nettoyage WiFi propre (important pour hotspot Linux)
 void wifiOffClean() {
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_OFF);
   delay(100);
 }
 
-// Connexion WiFi robuste
-bool connectWiFi(uint32_t timeoutMs = 15000) {
+// Tentative WiFi "clean"
+bool tryWiFiOnce(uint32_t timeoutMs = 12000) {
   if (WiFi.status() == WL_CONNECTED) return true;
 
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
   WiFi.mode(WIFI_STA);
 
-  // Nettoyage fort (évite état WiFi bloqué)
   WiFi.disconnect(true, true);
   delay(200);
 
@@ -95,19 +92,18 @@ bool connectWiFi(uint32_t timeoutMs = 15000) {
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("WiFi OK, IP = ");
+    Serial.print("WiFi OK, IP=");
     Serial.println(WiFi.localIP());
-    Serial.print("RSSI = ");
+    Serial.print("RSSI=");
     Serial.println(WiFi.RSSI());
     return true;
   }
 
-  Serial.println("WiFi ECHEC");
+  Serial.println("WiFi KO");
   return false;
 }
 
-// Connexion MQTT robuste
-bool connectMQTT(uint32_t timeoutMs = 8000) {
+bool tryMQTTOnce(uint32_t timeoutMs = 8000) {
   client.setServer(mqtt_server, mqtt_port);
   if (client.connected()) return true;
 
@@ -122,21 +118,37 @@ bool connectMQTT(uint32_t timeoutMs = 8000) {
     Serial.println(client.state());
     delay(1000);
   }
-  Serial.println(" MQTT ECHEC");
+  Serial.println(" MQTT KO");
   return false;
 }
 
-void deepSleepSeconds(uint32_t seconds) {
-  Serial.print("Deep sleep ");
-  Serial.print(seconds);
-  Serial.println(" s");
+// Essaie de rendre le réseau "OK" (WiFi + MQTT)
+// Ne spam pas: on l'appelle au plus 1 fois/min depuis loop()
+bool ensureNetwork() {
+  bool wifiOK = (WiFi.status() == WL_CONNECTED) ? true : tryWiFiOnce();
+  if (!wifiOK) return false;
+
+  bool mqttOK = client.connected() ? true : tryMQTTOnce();
+  return mqttOK;
+}
+
+void deepSleepNight() {
+  Serial.println("Deep sleep NUIT (30 min)");
   wifiOffClean();
-  esp_sleep_enable_timer_wakeup((uint64_t)seconds * uS_TO_S_FACTOR);
+  esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_NUIT_S * uS_TO_S_FACTOR);
   delay(200);
   esp_deep_sleep_start();
 }
 
+bool isNightFromLum(int lumRaw) {
+  bool night = (lumRaw <= LUX_NUIT);
+  bool day   = (lumRaw >= LUX_JOUR);
+  if (!night && !day) night = true; // zone grise => nuit
+  return night;
+}
+
 void publishOnce(const char* modeLabel) {
+  // Lectures
   byte t = 0, h = 0;
   int dhtErr = dht11.read(&t, &h, NULL);
 
@@ -151,6 +163,7 @@ void publishOnce(const char* modeLabel) {
   }
   int mqRaw = mqSum / 20;
 
+  // JSON
   String payload = "{";
   payload += "\"id\":\"" + String(SONDE_ID) + "\"";
   payload += ",\"mode\":\"" + String(modeLabel) + "\"";
@@ -169,6 +182,7 @@ void publishOnce(const char* modeLabel) {
 
   Serial.println(payload);
 
+  // Publish uniquement si réseau prêt
   if (client.connected()) {
     client.publish(buildTopic().c_str(), payload.c_str());
     Serial.println("MQTT envoyé");
@@ -180,65 +194,67 @@ void setup() {
   Serial.begin(115200);
   delay(300);
 
-  Serial.println("\n=== SONDE ESP32 (fix WiFi + deep sleep nuit) ===");
+  Serial.println("\n=== SONDE ESP32 (PRIORITE WIFI) ===");
   Serial.print("ID: ");
   Serial.println(SONDE_ID);
 
-  delay(200);
-  int lum0 = analogRead(PIN_LDR);
-
-  bool isNight = (lum0 <= LUX_NUIT);
-  bool isDay   = (lum0 >= LUX_JOUR);
-  if (!isNight && !isDay) isNight = true; // zone grise -> nuit
-
-  Serial.print("Luminosite start = ");
-  Serial.print(lum0);
-  Serial.print(" -> ");
-  Serial.println(isNight ? "NUIT" : "JOUR");
-
-  bool wifiOK = connectWiFi();
-  bool mqttOK = wifiOK && connectMQTT();
-
-  // Si réseau KO -> backoff pour ne pas saturer le hotspot
-  if (!mqttOK) {
-    Serial.println("Réseau KO -> backoff");
-    deepSleepSeconds(SLEEP_WIFI_FAIL_S);
-  }
-
-  // ===== NUIT =====
-  if (isNight) {
-    publishOnce("night");
-    deepSleepSeconds(SLEEP_NUIT_S);
-  }
-
-  // ===== JOUR =====
-  Serial.println("Mode JOUR (envoi toutes les 30 s)");
+  // On ne fait rien d'autre tant que netReady n'est pas vrai.
+  // (La loop s'en occupe, 1 essai/min.)
 }
 
 // =========================
 void loop() {
-  static unsigned long lastSend = 0;
+  static unsigned long lastWifiTry = 0;
+  static unsigned long lastSendDay = 0;
   static int nightStreak = 0;
 
+  // Toujours faire tourner MQTT si connecté
   client.loop();
 
-  if (millis() - lastSend >= SEND_JOUR_MS) {
-    lastSend = millis();
+  // 1) PRIORITE: tenter réseau au max 1 fois/min tant que pas prêt
+  if (!netReady) {
+    if (millis() - lastWifiTry >= WIFI_RETRY_MS || lastWifiTry == 0) {
+      lastWifiTry = millis();
+      Serial.println("== Tentative reseau (max 1/min) ==");
+      netReady = ensureNetwork();
+      if (netReady) {
+        Serial.println("== RESEAU OK -> activation des mesures ==");
+        // Reset timing d’envoi
+        lastSendDay = 0;
+        nightStreak = 0;
+      }
+    }
+    delay(50);
+    return; // IMPORTANT: on ne fait rien d'autre tant que netReady=false
+  }
 
-    int lum = analogRead(PIN_LDR);
+  // 2) Réseau OK -> on fait le job normal
+  int lum = analogRead(PIN_LDR);
+  bool isNight = isNightFromLum(lum);
+
+  // Nuit -> 1 envoi puis deep sleep 30 min
+  if (isNight) {
+    publishOnce("night");
+    deepSleepNight(); // ne revient pas
+  }
+
+  // Jour -> envoi toutes les 30s
+  if (millis() - lastSendDay >= SEND_JOUR_MS || lastSendDay == 0) {
+    lastSendDay = millis();
+
     Serial.print("Check lum = ");
     Serial.println(lum);
 
+    // Détection nuit confirmée (si tu caches le LDR)
     if (lum <= LUX_NUIT) nightStreak++;
     else nightStreak = 0;
 
     publishOnce("day");
 
-    // Bascule vers la nuit si confirmé
+    // Si nuit confirmée plusieurs fois -> passage en nuit
     if (nightStreak >= NIGHT_STREAK_REQUIRED) {
-      Serial.println("Nuit confirmee -> deep sleep");
       publishOnce("night");
-      deepSleepSeconds(SLEEP_NUIT_S);
+      deepSleepNight();
     }
   }
 
