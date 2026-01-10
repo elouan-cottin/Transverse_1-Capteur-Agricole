@@ -1,1 +1,78 @@
+/* Le conteneur du filtre doit créer un contexte */
+.filter {
+    position: relative;
+    /*z-index: 50;*/
+    /* au-dessus du layout normal */
+}
 
+.filter-btn {
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, .02);
+}
+
+.filter-popover {
+    position: absolute;
+    /*z-index: 9999;*/
+    right: 0;
+    top: calc(100% + 10px);
+    width: 320px;
+    padding: 12px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: rgba(15, 26, 46, .95);
+    box-shadow: var(--shadow);
+    display: none;
+}
+
+.filter-popover.open {
+    display: block;
+}
+
+.filter-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.filter-title {
+    font-weight: 800;
+}
+
+.filter-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.filter-list {
+    max-height: 220px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 8px;
+    background: rgba(255, 255, 255, .02);
+}
+
+.chk {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 10px;
+}
+
+.chk:hover {
+    background: rgba(255, 255, 255, .03);
+}
+
+.chk input {
+    transform: scale(1.1);
+}
+
+.filter-foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
