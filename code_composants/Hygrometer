@@ -1,0 +1,21 @@
+const int SOIL_PIN = 32;
+
+const int DRY = 2590;  // valeur mesurée à l'air
+const int WET = 900;  // valeur mesurée en sol mouillé
+
+void setup() {
+  Serial.begin(115200);
+}
+
+void loop() {
+  int raw = analogRead(SOIL_PIN);
+
+  int pct = map(raw, DRY, WET, 0, 100);
+  pct = constrain(pct, 0, 100);
+
+  Serial.print("Humidite sol = ");
+  Serial.print(pct);
+  Serial.println(" %");
+
+  delay(500);
+}
