@@ -1,681 +1,546 @@
-// app.js — EcoPilot dashboard (maquette)
+/* ============================
+   Dashboard app.js (EcoPilot)
+   - API: /api/sondes, /api/latest, /api/series
+   - MQTT est déjà collecté en DB côté Raspberry
+   ============================ */
 
-// -------------------------
-// MOCK DATA (sondes)
-// -------------------------
-let MOCK_SONDES = [
-    {
-        id: "sonde1",
-        online: true,
-        temp: 24,
-        hum_air: 51,
-        lum_raw: 2180,
-        soil_raw: 1510,
-        soil_pct: 62,
-        mq_raw: 1985,
-        mq_base: 1260,
-        mq_delta: 35,
-        lastSeen: "il y a 3s",
-        mqCalibrating: false,
-        dhtErr: null
-    },
-    {
-        id: "sonde2",
-        online: true,
-        temp: 26,
-        hum_air: 46,
-        lum_raw: 980,
-        soil_raw: 2450,
-        soil_pct: 18,
-        mq_raw: 2102,
-        mq_base: 1280,
-        mq_delta: 92,
-        lastSeen: "il y a 6s",
-        mqCalibrating: false,
-        dhtErr: null
-    },
-    {
-        id: "sonde3",
-        online: false,
-        temp: null,
-        hum_air: null,
-        lum_raw: null,
-        soil_raw: null,
-        soil_pct: null,
-        mq_raw: null,
-        mq_base: -1,
-        mq_delta: null,
-        lastSeen: "il y a 2m",
-        mqCalibrating: true,
-        dhtErr: null
-    }
-];
-
-// -------------------------
-// MOCK ALERTES
-// -------------------------
-let mockAlerts = [
-    {
-        key: "sonde2:SOIL_LOW",
-        sondeId: "sonde2",
-        title: "Sol trop sec",
-        details: "soil_pct = 18% (seuil < 25%)",
-        severity: "bad",      // bad | warn | ok
-        since: "14:22",
-        state: "active"       // active | recovered | ack
-    },
-    {
-        key: "sonde2:MQ_SPIKE",
-        sondeId: "sonde2",
-        title: "Variation air élevée",
-        details: "mq_delta = 92 (seuil > 80)",
-        severity: "warn",
-        since: "14:24",
-        state: "recovered"
-    }
-];
-
-// sélection
-let selected = new Set(); // vide => toutes
-let currentTab = "active";
-
-const $ = (id) => document.getElementById(id);
-
-// -------------------------
-// HELPERS
-// -------------------------
-function formatVal(v, unit = "", fallback = "--") {
-    if (v === null || v === undefined) return fallback;
-    return `${v}${unit}`;
-}
-
-function visibleSondes() {
-    if (selected.size === 0) return MOCK_SONDES;
-    return MOCK_SONDES.filter(s => selected.has(s.id));
-}
-
-function sortSondes(arr) {
-    return [...arr].sort((a, b) => {
-        const oa = a.online ? 0 : 1;
-        const ob = b.online ? 0 : 1;
-        if (oa !== ob) return oa - ob;
-        return a.id.localeCompare(b.id, "fr", { numeric: true });
-    });
-}
-
-function visibleSondesSorted() {
-    return sortSondes(visibleSondes());
-}
-
-function updateFilterSummary() {
-    const summary = $("filterSummary");
-    if (!summary) return;
-
-    if (selected.size === 0) summary.textContent = "Toutes";
-    else if (selected.size === 1) summary.textContent = [...selected][0];
-    else summary.textContent = `${selected.size} sélectionnées`;
-}
-
-function setLastUpdate() {
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, "0");
-    const mm = String(now.getMinutes()).padStart(2, "0");
-    const ss = String(now.getSeconds()).padStart(2, "0");
-    const el = $("lastUpdate");
-    if (el) el.textContent = `Dernière mise à jour : ${hh}:${mm}:${ss}`;
-}
-
-// -------------------------
-// FILTER UI
-// -------------------------
-function renderFilterList() {
-    const list = $("filterList");
-    if (!list) return;
-
-    list.innerHTML = "";
-
-    for (const s of sortSondes(MOCK_SONDES)) {
-        const row = document.createElement("label");
-        row.className = "chk";
-        row.innerHTML = `
-      <input type="checkbox" data-id="${s.id}">
-      <div>
-        <div style="font-weight:800">${s.id}</div>
-        <div class="muted">${s.online ? "en ligne" : "hors ligne"}</div>
-      </div>
-    `;
-        list.appendChild(row);
-    }
-
-    syncFilterCheckboxes();
-}
-
-function syncFilterCheckboxes() {
-    const list = $("filterList");
-    if (!list) return;
-
-    const checks = list.querySelectorAll("input[type=checkbox]");
-    checks.forEach(chk => {
-        const id = chk.getAttribute("data-id");
-        chk.checked = selected.size === 0 ? true : selected.has(id);
-    });
-}
-
-// -------------------------
-// CAROUSEL RENDER
-// -------------------------
-function renderSondeCardHTML(s) {
-    const badgeClass = s.online ? "ok" : "off";
-    const badgeText = s.online ? "EN LIGNE" : "HORS LIGNE";
-    const extraBadge = s.mqCalibrating ? `<span class="badge cal">MQ CALIB</span>` : "";
-
-    const tempText = s.dhtErr ? `DHT err ${s.dhtErr}` : formatVal(s.temp, "°C");
-    const humText = s.dhtErr ? "--" : formatVal(s.hum_air, "%");
-
-    return `
-    <div class="card sonde-card compact">
-      <div class="sonde-head">
-        <div class="sonde-name">${s.id}</div>
-        <div style="display:flex; gap:8px; align-items:center">
-          ${extraBadge}
-          <span class="badge ${badgeClass}">${badgeText}</span>
-        </div>
-      </div>
-
-      <div class="metrics">
-        <div class="metric">
-          <div class="k">Temp</div>
-          <div class="v">${tempText}</div>
-        </div>
-        <div class="metric">
-          <div class="k">Hum air</div>
-          <div class="v">${humText}</div>
-        </div>
-        <div class="metric">
-          <div class="k">Sol</div>
-          <div class="v">${formatVal(s.soil_pct, "%")}</div>
-        </div>
-        <div class="metric">
-          <div class="k">MQ Δ</div>
-          <div class="v">${formatVal(s.mq_delta, "")}</div>
-        </div>
-      </div>
-
-      <div style="margin-top:10px" class="muted">
-        Dernière trame : ${s.lastSeen}
-      </div>
-    </div>
-  `;
-}
-
-function renderCarousel() {
-    const track = $("carouselTrack");
-    if (!track) return;
-
-    const items = visibleSondesSorted();
-    track.innerHTML = items.map(renderSondeCardHTML).join("");
-}
-
-// -------------------------
-// STATUS LIST (colonne gauche)
-// -------------------------
-function renderStatusList() {
-    const wrap = $("statusList");
-    const count = $("statusCount");
-    if (!wrap) return;
-
-    const items = visibleSondesSorted();
-    if (count) count.textContent = `${items.length}`;
-
-    wrap.innerHTML = "";
-
-    for (const s of items) {
-        const state =
-            s.mqCalibrating ? "Calibration MQ" :
-                s.online ? "En ligne" : "Hors ligne";
-
-        const badgeClass =
-            s.mqCalibrating ? "cal" :
-                s.online ? "ok" : "off";
-
-        const row = document.createElement("div");
-        row.className = "status-row";
-        row.innerHTML = `
-      <div class="left">
-        <div class="id">${s.id}</div>
-        <div class="meta">${state} • ${s.lastSeen}</div>
-      </div>
-      <span class="badge ${badgeClass}">${state.toUpperCase()}</span>
-    `;
-        wrap.appendChild(row);
-    }
-}
-
-// -------------------------
-// TABLE
-// -------------------------
-function renderTable() {
-    const body = $("tableBody");
-    if (!body) return;
-
-    body.innerHTML = "";
-
-    const sondes = visibleSondesSorted();
-    const count = $("tableCount");
-    if (count) count.textContent = `${sondes.length} ligne(s)`;
-
-    for (const s of sondes) {
-        const tempText = s.dhtErr ? `DHT err ${s.dhtErr}` : formatVal(s.temp, "°C");
-        const humText = s.dhtErr ? "--" : formatVal(s.hum_air, "%");
-
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-      <td><strong>${s.id}</strong></td>
-      <td>${tempText}</td>
-      <td>${humText}</td>
-      <td>${formatVal(s.soil_pct, "%")}</td>
-      <td>${formatVal(s.lum_raw, "")}</td>
-      <td>${formatVal(s.mq_delta, "")}</td>
-      <td class="muted">${s.lastSeen}</td>
-    `;
-        body.appendChild(tr);
-    }
-}
-
-// -------------------------
-// ALERTS
-// -------------------------
-function renderAlerts() {
-    const wrap = $("alerts");
-    if (!wrap) return;
-
-    wrap.innerHTML = "";
-
-    const visibleIds = new Set(visibleSondesSorted().map(s => s.id));
-
-    const filtered = mockAlerts
-        .filter(a => visibleIds.has(a.sondeId))
-        .filter(a => (currentTab === "active" ? a.state !== "ack" : a.state === "ack"));
-
-    if (filtered.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "muted";
-        empty.style.padding = "8px 2px";
-        empty.textContent = currentTab === "active" ? "Aucune alerte active." : "Aucun élément dans l’historique.";
-        wrap.appendChild(empty);
-        return;
-    }
-
-    for (const a of filtered) {
-        const div = document.createElement("div");
-        div.className = "alert";
-
-        const sevLabel = a.severity === "bad" ? "CRITIQUE" : a.severity === "warn" ? "ATTENTION" : "INFO";
-        const stateText =
-            a.state === "active" ? "Active" :
-                a.state === "recovered" ? "Revenue normale (non vue)" :
-                    "Acquittée";
-
-        const showAck = (currentTab === "active" && a.state !== "ack");
-
-        div.innerHTML = `
-      <div class="alert-top">
-        <div>
-          <div class="alert-title">${a.sondeId} — ${a.title}</div>
-          <div class="alert-meta">${a.details}</div>
-          <div class="alert-meta">Détectée : ${a.since} • État : ${stateText}</div>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
-          <span class="sev ${a.severity}">${sevLabel}</span>
-          ${showAck ? `<button class="primary" data-ack="${a.key}" type="button">Vu</button>` : ``}
-        </div>
-      </div>
-    `;
-
-        wrap.appendChild(div);
-    }
-
-    wrap.querySelectorAll("button[data-ack]").forEach(btn => {
-        btn.addEventListener("click", () => {
-            const key = btn.getAttribute("data-ack");
-            mockAlerts = mockAlerts.map(a => a.key === key ? { ...a, state: "ack" } : a);
-            renderAlerts();
-        });
-    });
-}
-
-// -------------------------
-// DRAG-TO-SCROLL + WHEEL (carousel)
-// -------------------------
-function setupDragScroll() {
-    const el = document.getElementById("carousel");
-    if (!el) return;
-
-    let isDown = false;
-    let startX = 0;
-    let scrollLeft = 0;
-
-    const onDown = (e) => {
-        if (e.button !== 0) return;
-        isDown = true;
-        el.classList.add("dragging");
-        startX = e.pageX;
-        scrollLeft = el.scrollLeft;
-
-        document.body.classList.add("no-select");
-    };
-
-    const onUp = () => {
-        isDown = false;
-        el.classList.remove("dragging");
-        document.body.classList.remove("no-select");
-    };
-
-    const onMove = (e) => {
-        if (!isDown) return;
-        e.preventDefault();
-        const walk = (e.pageX - startX) * 1.6;
-        el.scrollLeft = scrollLeft - walk;
-    };
-
-    el.addEventListener("mousedown", onDown);
-    el.addEventListener("mouseup", onUp);
-    el.addEventListener("mouseleave", onUp);
-    el.addEventListener("mousemove", onMove);
-
-    // Empêche drag natif (images/liens)
-    el.addEventListener("dragstart", (e) => e.preventDefault());
-
-    // molette verticale -> horizontal
-    el.addEventListener("wheel", (e) => {
-        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-            e.preventDefault();
-            el.scrollLeft += e.deltaY;
-        }
-    }, { passive: false });
-}
-
-// -------------------------
-// GRAPHIQUES (mock) + plage
-// -------------------------
-const RANGE_CONFIG = {
-    "1h": { points: 60, stepLabel: (i) => `${60 - i}m` },   // 60 minutes
-    "12h": { points: 12, stepLabel: (i) => `${12 - i}h` },   // 12 points (1/h)
-    "24h": { points: 24, stepLabel: (i) => `${24 - i}h` },   // 24 points (1/h)
-    "7d": { points: 7, stepLabel: (i) => `${7 - i}j` },    // 7 jours
-    "30d": { points: 30, stepLabel: (i) => `${30 - i}j` }    // 30 jours
+const API = {
+  sondes: "/api/sondes",
+  latest: (limit = 100) => `/api/latest?limit=${encodeURIComponent(limit)}`,
+  series: (sonde, metric, range) =>
+    `/api/series?sonde=${encodeURIComponent(sonde)}&metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`
 };
 
-let currentRange = "24h"; // défaut
+// --------- DOM helpers
+const $ = (id) => document.getElementById(id);
 
-function generateSeries(rangeKey, base, variance) {
-    const cfg = RANGE_CONFIG[rangeKey];
-    const data = [];
-    for (let i = cfg.points - 1; i >= 0; i--) {
-        data.push({
-            t: cfg.stepLabel(i),
-            v: Math.round(base + (Math.random() - 0.5) * variance)
-        });
+function fmtTs(ts) {
+  if (!ts) return "--";
+  const d = new Date(ts * 1000);
+  return d.toLocaleString();
+}
+
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+
+function safeNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// --------- State
+const state = {
+  range: "24h",
+  sondes: [],
+  selectedSondes: new Set(),  // filtre
+  primarySonde: null,         // utilisée pour les graphes
+  latestRows: []
+};
+
+// --------- Elements (IDs de ton index.html)
+const el = {
+  mqttStatus: $("mqttStatus"),
+  lastUpdate: $("lastUpdate"),
+
+  // filtre
+  filterBtn: $("filterBtn"),
+  filterSummary: $("filterSummary"),
+  filterPopover: $("filterPopover"),
+  filterList: $("filterList"),
+  applyFilterBtn: $("applyFilterBtn"),
+  selectAllBtn: $("selectAllBtn"),
+  selectNoneBtn: $("selectNoneBtn"),
+
+  // UI
+  statusList: $("statusList"),
+  statusCount: $("statusCount"),
+  carousel: $("carousel"),
+  carouselTrack: $("carouselTrack"),
+  tableBody: $("tableBody"),
+  tableCount: $("tableCount"),
+
+  // range
+  rangeSwitch: $("rangeSwitch"),
+
+  // charts (peuvent ne pas exister)
+  chartSoil: $("chartSoil"),
+  chartTemp: $("chartTemp"),
+  chartMQ: $("chartMQ"),
+  chartLum: $("chartLum")
+};
+
+// --------- Charts (créés seulement si canvas présent)
+let charts = {
+  soil: null,
+  temp: null,
+  mq: null,
+  lum: null
+};
+
+function canvasExists(canvasEl) {
+  return !!(canvasEl && canvasEl.getContext);
+}
+
+function makeLineChart(canvasEl, label) {
+  if (!canvasExists(canvasEl) || typeof Chart === "undefined") return null;
+  const ctx = canvasEl.getContext("2d");
+  return new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [{
+        label,
+        data: [],
+        tension: 0.25,
+        pointRadius: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: true }
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 6 } },
+        y: { beginAtZero: false }
+      }
     }
-    return data;
+  });
 }
 
-function getHistoryForRange(rangeKey) {
-    // mock : plus la plage est longue, plus on lisse un peu
-    const mul =
-        rangeKey === "1h" ? 1.2 :
-            rangeKey === "12h" ? 1.0 :
-                rangeKey === "24h" ? 0.9 :
-                    rangeKey === "7d" ? 0.7 :
-                        0.6;
+function ensureCharts() {
+  if (!charts.soil) charts.soil = makeLineChart(el.chartSoil, "Soil (%)");
+  if (!charts.temp) charts.temp = makeLineChart(el.chartTemp, "Temp (°C)");
+  if (!charts.mq)   charts.mq   = makeLineChart(el.chartMQ,   "MQ (raw)");
+  if (!charts.lum)  charts.lum  = makeLineChart(el.chartLum,  "Lum (raw)");
+}
 
-    return {
-        soil: generateSeries(rangeKey, 45, 15 * mul),
-        temp: generateSeries(rangeKey, 23, 6 * mul),
-        mq: generateSeries(rangeKey, 20, 25 * mul),
-        lum: generateSeries(rangeKey, 1400, 600 * mul)
+async function apiGet(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(`HTTP ${r.status} on ${url}`);
+  return await r.json();
+}
+
+// --------- Filtre UI
+function setFilterSummary() {
+  if (!el.filterSummary) return;
+
+  if (state.selectedSondes.size === 0 || state.selectedSondes.size === state.sondes.length) {
+    el.filterSummary.textContent = "Toutes";
+    return;
+  }
+  if (state.selectedSondes.size === 1) {
+    el.filterSummary.textContent = [...state.selectedSondes][0];
+    return;
+  }
+  el.filterSummary.textContent = `${state.selectedSondes.size} sélectionnées`;
+}
+
+function renderFilterList() {
+  if (!el.filterList) return;
+  el.filterList.innerHTML = "";
+
+  state.sondes.forEach((sid) => {
+    const row = document.createElement("label");
+    row.className = "chk";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = state.selectedSondes.has(sid);
+    input.dataset.sonde = sid;
+
+    const span = document.createElement("span");
+    span.textContent = sid;
+
+    row.appendChild(input);
+    row.appendChild(span);
+    el.filterList.appendChild(row);
+  });
+}
+
+function openFilter(open) {
+  if (!el.filterPopover) return;
+  if (open) {
+    el.filterPopover.classList.add("open"); // respecte ton CSS .filter-popover.open :contentReference[oaicite:1]{index=1}
+    el.filterPopover.setAttribute("aria-hidden", "false");
+  } else {
+    el.filterPopover.classList.remove("open");
+    el.filterPopover.setAttribute("aria-hidden", "true");
+  }
+}
+
+function initFilterEvents() {
+  if (el.filterBtn) {
+    el.filterBtn.addEventListener("click", () => {
+      const isOpen = el.filterPopover && el.filterPopover.classList.contains("open");
+      openFilter(!isOpen);
+    });
+  }
+
+  // click dehors pour fermer
+  document.addEventListener("click", (e) => {
+    if (!el.filterPopover || !el.filterBtn) return;
+    const inside = el.filterPopover.contains(e.target) || el.filterBtn.contains(e.target);
+    if (!inside) openFilter(false);
+  });
+
+  if (el.selectAllBtn) {
+    el.selectAllBtn.addEventListener("click", () => {
+      state.selectedSondes = new Set(state.sondes);
+      renderFilterList();
+      setFilterSummary();
+    });
+  }
+
+  if (el.selectNoneBtn) {
+    el.selectNoneBtn.addEventListener("click", () => {
+      state.selectedSondes = new Set(); // none
+      renderFilterList();
+      setFilterSummary();
+    });
+  }
+
+  if (el.applyFilterBtn) {
+    el.applyFilterBtn.addEventListener("click", () => {
+      // lire les checkboxes
+      const checks = el.filterList ? el.filterList.querySelectorAll("input[type=checkbox]") : [];
+      const next = new Set();
+      checks.forEach((c) => {
+        if (c.checked) next.add(c.dataset.sonde);
+      });
+      // si tout est décoché, on interprète comme "toutes" (plus user-friendly)
+      state.selectedSondes = next.size === 0 ? new Set(state.sondes) : next;
+
+      // choisir la primary sonde (pour les graphes)
+      if (!state.primarySonde || !state.selectedSondes.has(state.primarySonde)) {
+        state.primarySonde = [...state.selectedSondes][0] || state.sondes[0] || null;
+      }
+
+      setFilterSummary();
+      openFilter(false);
+
+      // refresh UI
+      renderAll();
+      refreshCharts().catch(console.error);
+    });
+  }
+}
+
+// --------- Status / Carousel / Table
+function groupLatestBySonde(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    if (!m.has(r.sonde_id)) m.set(r.sonde_id, r);
+  }
+  return m;
+}
+
+function isSondeVisible(sondeId) {
+  // si aucun filtre défini, tout visible
+  if (state.selectedSondes.size === 0) return true;
+  return state.selectedSondes.has(sondeId);
+}
+
+function renderStatus(rowsBySonde) {
+  if (!el.statusList) return;
+  el.statusList.innerHTML = "";
+
+  const visibles = state.sondes.filter(isSondeVisible);
+
+  if (el.statusCount) el.statusCount.textContent = String(visibles.length);
+
+  for (const sid of visibles) {
+    const r = rowsBySonde.get(sid);
+
+    const row = document.createElement("div");
+    row.className = "status-row"; // ton CSS :contentReference[oaicite:2]{index=2}
+
+    const left = document.createElement("div");
+    left.className = "left";
+
+    const id = document.createElement("div");
+    id.className = "id";
+    id.textContent = sid;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    if (r) meta.textContent = `Dernière trame: ${fmtTs(r.ts)}`;
+    else meta.textContent = "Aucune donnée";
+
+    left.appendChild(id);
+    left.appendChild(meta);
+
+    const right = document.createElement("div");
+    right.className = "pill";
+    right.textContent = r ? "OK" : "—";
+
+    row.appendChild(left);
+    row.appendChild(right);
+
+    el.statusList.appendChild(row);
+  }
+}
+
+function renderCarousel(rowsBySonde) {
+  if (!el.carouselTrack) return;
+  el.carouselTrack.innerHTML = "";
+
+  const visibles = state.sondes.filter(isSondeVisible);
+
+  for (const sid of visibles) {
+    const r = rowsBySonde.get(sid);
+
+    const card = document.createElement("div");
+    card.className = "sonde-card compact card"; // carousel CSS :contentReference[oaicite:3]{index=3}
+
+    const head = document.createElement("div");
+    head.className = "sonde-head";
+
+    const name = document.createElement("div");
+    name.className = "sonde-name";
+    name.textContent = sid;
+
+    const badge = document.createElement("div");
+    badge.className = "pill";
+    badge.textContent = r ? (r.mode || "—") : "—";
+
+    head.appendChild(name);
+    head.appendChild(badge);
+
+    const metrics = document.createElement("div");
+    metrics.className = "metrics";
+
+    const mkMetric = (k, v) => {
+      const box = document.createElement("div");
+      box.className = "metric";
+      const kk = document.createElement("div");
+      kk.className = "k";
+      kk.textContent = k;
+      const vv = document.createElement("div");
+      vv.className = "v";
+      vv.textContent = (v === null || v === undefined) ? "—" : String(v);
+      box.appendChild(kk);
+      box.appendChild(vv);
+      return box;
     };
-}
 
-function buildLineChart(canvasEl, label, data, color) {
-    if (!canvasEl || typeof Chart === "undefined") return null;
+    metrics.appendChild(mkMetric("Temp", r?.temp ?? null));
+    metrics.appendChild(mkMetric("Hum air", r?.hum_air ?? null));
+    metrics.appendChild(mkMetric("Soil %", r?.soil_pct ?? null));
+    metrics.appendChild(mkMetric("Lum", r?.lum_raw ?? null));
+    metrics.appendChild(mkMetric("MQ", r?.mq_raw ?? null));
+    metrics.appendChild(mkMetric("Dernier", r ? new Date(r.ts * 1000).toLocaleTimeString() : "—"));
 
-    return new Chart(canvasEl.getContext("2d"), {
-        type: "line",
-        data: {
-            labels: data.map(d => d.t),
-            datasets: [{
-                label,
-                data: data.map(d => d.v),
-                borderColor: color,
-                backgroundColor: color + "33",
-                tension: 0.35,
-                fill: true,
-                pointRadius: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: { enabled: true }
-            },
-            scales: {
-                x: {
-                    ticks: { color: "#8ea2c1", maxRotation: 0, autoSkip: true },
-                    grid: { display: false }
-                },
-                y: {
-                    ticks: { color: "#8ea2c1" },
-                    grid: { color: "rgba(255,255,255,.05)" }
-                }
-            }
-        }
+    card.appendChild(head);
+    card.appendChild(metrics);
+
+    // clic => devient la sonde principale des graphes
+    card.addEventListener("click", () => {
+      state.primarySonde = sid;
+      refreshCharts().catch(console.error);
     });
+
+    el.carouselTrack.appendChild(card);
+  }
 }
 
-let charts = { soil: null, temp: null, mq: null, lum: null };
+function renderTable(rows) {
+  if (!el.tableBody) return;
+  el.tableBody.innerHTML = "";
 
-function initCharts() {
-    const hist = getHistoryForRange(currentRange);
+  // filtrer sur sondes visibles
+  const filtered = rows.filter(r => isSondeVisible(r.sonde_id));
 
-    charts.soil = buildLineChart(document.getElementById("chartSoil"), "Humidité sol (%)", hist.soil, "#4fd1c5");
-    charts.temp = buildLineChart(document.getElementById("chartTemp"), "Température (°C)", hist.temp, "#63b3ed");
-    charts.mq = buildLineChart(document.getElementById("chartMQ"), "Qualité de l’air (MQ)", hist.mq, "#f6ad55");
-    charts.lum = buildLineChart(document.getElementById("chartLum"), "Luminosité", hist.lum, "#ecc94b");
+  if (el.tableCount) el.tableCount.textContent = `${filtered.length} ligne(s)`;
 
-    // Safety: certains layouts mettent 1 frame à se stabiliser
-    setTimeout(() => {
-        Object.values(charts).forEach(c => c && c.resize());
-    }, 150);
-}
+  for (const r of filtered) {
+    const tr = document.createElement("tr");
 
-function updateCharts(rangeKey) {
-    currentRange = rangeKey;
-    const hist = getHistoryForRange(rangeKey);
-
-    const apply = (chart, series) => {
-        if (!chart) return;
-        chart.data.labels = series.map(d => d.t);
-        chart.data.datasets[0].data = series.map(d => d.v);
-        chart.update();
+    const td = (txt) => {
+      const x = document.createElement("td");
+      x.textContent = (txt === null || txt === undefined) ? "—" : String(txt);
+      return x;
     };
 
-    apply(charts.soil, hist.soil);
-    apply(charts.temp, hist.temp);
-    apply(charts.mq, hist.mq);
-    apply(charts.lum, hist.lum);
+    tr.appendChild(td(r.sonde_id));
+    tr.appendChild(td(r.temp));
+    tr.appendChild(td(r.hum_air));
+    tr.appendChild(td(r.soil_pct));
+    tr.appendChild(td(r.lum_raw));
+    tr.appendChild(td(r.mq_raw));
+    tr.appendChild(td(fmtTs(r.ts)));
+
+    el.tableBody.appendChild(tr);
+  }
 }
 
-function setupRangeSwitch() {
-    const wrap = document.getElementById("rangeSwitch");
-    if (!wrap) return;
-
-    wrap.addEventListener("click", (e) => {
-        const btn = e.target.closest("button[data-range]");
-        if (!btn) return;
-
-        const range = btn.getAttribute("data-range");
-
-        wrap.querySelectorAll(".range-btn").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-
-        updateCharts(range);
-    });
+// --------- Charts update
+function setCardPills(rangeText) {
+  // dans ton HTML, tu as des <span class="pill">24h</span> statiques.
+  // Pour l’instant on ne les modifie pas (facultatif).
+  // On garde simple.
 }
 
-// -------------------------
-// SIMULATION: nouvelle sonde
-// -------------------------
-function nextSondeId() {
-    const nums = MOCK_SONDES
-        .map(s => parseInt((s.id.match(/\d+/) || ["0"])[0], 10))
-        .filter(n => !isNaN(n));
-    const next = (nums.length ? Math.max(...nums) : 0) + 1;
-    return `sonde${next}`;
+async function refreshCharts() {
+  ensureCharts();
+
+  // Si pas de canvas, on sort sans erreur
+  const hasAny = charts.soil || charts.temp || charts.mq || charts.lum;
+  if (!hasAny) return;
+
+  const sonde = state.primarySonde || state.sondes[0];
+  if (!sonde) return;
+
+  const range = state.range;
+
+  // metrics mappés à ton API
+  const reqs = [
+    apiGet(API.series(sonde, "soil_pct", range)),
+    apiGet(API.series(sonde, "temp", range)),
+    apiGet(API.series(sonde, "mq_raw", range)),
+    apiGet(API.series(sonde, "lum_raw", range))
+  ];
+
+  const [soil, temp, mq, lum] = await Promise.all(reqs);
+
+  const apply = (chart, rows) => {
+    if (!chart) return;
+    const labels = rows.map(r => new Date(r.ts * 1000).toLocaleTimeString());
+    const data = rows.map(r => r.v);
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = data;
+    chart.update();
+  };
+
+  apply(charts.soil, soil);
+  apply(charts.temp, temp);
+  apply(charts.mq, mq);
+  apply(charts.lum, lum);
+
+  if (el.lastUpdate) el.lastUpdate.textContent = `Dernière mise à jour : ${new Date().toLocaleString()}`;
 }
 
-function simulateNewSonde() {
-    const id = nextSondeId();
+// --------- Range switch
+function initRangeSwitch() {
+  if (!el.rangeSwitch) return;
 
-    const newSonde = {
-        id,
-        online: true,
-        temp: 23,
-        hum_air: 50,
-        lum_raw: 1400,
-        soil_raw: 1900,
-        soil_pct: 45,
-        mq_raw: 1800,
-        mq_base: -1,
-        mq_delta: 0,
-        lastSeen: "à l’instant",
-        mqCalibrating: true,
-        dhtErr: null
-    };
+  el.rangeSwitch.addEventListener("click", (e) => {
+    const btn = e.target.closest(".range-btn");
+    if (!btn) return;
 
-    MOCK_SONDES.push(newSonde);
+    const range = btn.dataset.range;
+    if (!range) return;
 
-    renderFilterList();
-    updateFilterSummary();
-    renderAll();
+    state.range = range;
 
-    // fin calibration simulée
-    setTimeout(() => {
-        const s = MOCK_SONDES.find(x => x.id === id);
-        if (!s) return;
-        s.mqCalibrating = false;
-        s.mq_base = 1275;
-        s.mq_delta = 12;
-        s.lastSeen = "il y a 1s";
-        renderAll();
-    }, 8000);
+    // toggle active class (ton CSS range-btn.active :contentReference[oaicite:4]{index=4})
+    el.rangeSwitch.querySelectorAll(".range-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    refreshCharts().catch(console.error);
+  });
 }
 
-// -------------------------
-// EVENTS (tabs / filter / ack all)
-// -------------------------
-function setupTabs() {
-    $("tabActive").addEventListener("click", () => {
-        currentTab = "active";
-        $("tabActive").classList.add("active");
-        $("tabHistory").classList.remove("active");
-        renderAlerts();
-    });
+// --------- Carousel drag scroll
+function initCarouselDrag() {
+  if (!el.carousel) return;
 
-    $("tabHistory").addEventListener("click", () => {
-        currentTab = "history";
-        $("tabHistory").classList.add("active");
-        $("tabActive").classList.remove("active");
-        renderAlerts();
-    });
+  let isDown = false;
+  let startX = 0;
+  let scrollLeft = 0;
+
+  el.carousel.addEventListener("mousedown", (e) => {
+    isDown = true;
+    el.carousel.classList.add("dragging");
+    startX = e.pageX - el.carousel.offsetLeft;
+    scrollLeft = el.carousel.scrollLeft;
+  });
+
+  window.addEventListener("mouseup", () => {
+    isDown = false;
+    el.carousel.classList.remove("dragging");
+  });
+
+  el.carousel.addEventListener("mouseleave", () => {
+    isDown = false;
+    el.carousel.classList.remove("dragging");
+  });
+
+  el.carousel.addEventListener("mousemove", (e) => {
+    if (!isDown) return;
+    e.preventDefault();
+    const x = e.pageX - el.carousel.offsetLeft;
+    const walk = (x - startX) * 1.4;
+    el.carousel.scrollLeft = scrollLeft - walk;
+  });
 }
 
-function setupFilterPopover() {
-    const pop = $("filterPopover");
+// --------- Main refresh loop
+async function refreshLatest() {
+  try {
+    const rows = await apiGet(API.latest(200));
+    state.latestRows = rows;
 
-    $("filterBtn").addEventListener("click", () => {
-        const open = pop.classList.toggle("open");
-        pop.setAttribute("aria-hidden", open ? "false" : "true");
-        syncFilterCheckboxes();
-    });
+    // état mqtt: si on reçoit des rows, c'est "OK"
+    if (el.mqttStatus) {
+      el.mqttStatus.dataset.state = "ok";
+      const label = el.mqttStatus.querySelector(".label");
+      if (label) label.textContent = "MQTT: Connecté";
+    }
 
-    document.addEventListener("click", (e) => {
-        if (!e.target.closest(".filter")) {
-            pop.classList.remove("open");
-            pop.setAttribute("aria-hidden", "true");
-        }
-    });
+    const bySonde = groupLatestBySonde(rows);
+    renderStatus(bySonde);
+    renderCarousel(bySonde);
+    renderTable(rows);
 
-    $("selectAllBtn").addEventListener("click", () => {
-        selected.clear();
-        syncFilterCheckboxes();
-        updateFilterSummary();
-    });
-
-    $("selectNoneBtn").addEventListener("click", () => {
-        $("filterList").querySelectorAll("input[type=checkbox]").forEach(chk => chk.checked = false);
-    });
-
-    $("applyFilterBtn").addEventListener("click", () => {
-        const checks = $("filterList").querySelectorAll("input[type=checkbox]");
-        const chosen = [...checks].filter(c => c.checked).map(c => c.getAttribute("data-id"));
-
-        if (chosen.length === 0 || chosen.length === MOCK_SONDES.length) {
-            selected.clear();
-        } else {
-            selected = new Set(chosen);
-        }
-
-        updateFilterSummary();
-        renderAll();
-
-        pop.classList.remove("open");
-        pop.setAttribute("aria-hidden", "true");
-    });
+    if (el.lastUpdate) el.lastUpdate.textContent = `Dernière mise à jour : ${new Date().toLocaleString()}`;
+  } catch (err) {
+    console.error(err);
+    if (el.mqttStatus) {
+      el.mqttStatus.dataset.state = "bad";
+      const label = el.mqttStatus.querySelector(".label");
+      if (label) label.textContent = "API: indisponible";
+    }
+  }
 }
 
-function setupAckAll() {
-    $("ackAllBtn").addEventListener("click", () => {
-        const ids = new Set(visibleSondesSorted().map(s => s.id));
-        mockAlerts = mockAlerts.map(a => {
-            if (ids.has(a.sondeId) && a.state !== "ack") return { ...a, state: "ack" };
-            return a;
-        });
-        renderAlerts();
-    });
-}
-
-// -------------------------
-// MAIN RENDER
-// -------------------------
 function renderAll() {
-    setLastUpdate();
-    renderCarousel();
-    renderStatusList();
-    renderTable();
-    renderAlerts();
+  const bySonde = groupLatestBySonde(state.latestRows);
+  renderStatus(bySonde);
+  renderCarousel(bySonde);
+  renderTable(state.latestRows);
 }
 
-// -------------------------
-// INIT
-// -------------------------
-function init() {
+async function bootstrap() {
+  // events
+  initFilterEvents();
+  initRangeSwitch();
+  initCarouselDrag();
+
+  // load sondes
+  try {
+    const sondes = await apiGet(API.sondes);
+    state.sondes = Array.isArray(sondes) ? sondes : [];
+
+    // default: toutes sélectionnées
+    state.selectedSondes = new Set(state.sondes);
+    state.primarySonde = state.sondes[0] || null;
+
     renderFilterList();
-    updateFilterSummary();
+    setFilterSummary();
+  } catch (e) {
+    console.error("Cannot load sondes:", e);
+  }
 
-    setupTabs();
-    setupFilterPopover();
-    setupAckAll();
-    setupDragScroll();
+  // premier refresh + charts
+  await refreshLatest();
+  await refreshCharts();
 
-    $("simulateAddBtn").addEventListener("click", simulateNewSonde);
-
-    renderAll();
-    initCharts();
-    setupRangeSwitch();
+  // boucle refresh
+  setInterval(refreshLatest, 5000);
 }
 
-init();
-
+document.addEventListener("DOMContentLoaded", bootstrap);
