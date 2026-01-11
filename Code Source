@@ -2,8 +2,6 @@
 #include <PubSubClient.h>
 #include <SimpleDHT.h>
 
-#define uS_TO_S_FACTOR 1000000ULL
-
 // =========================
 //  WIFI
 // =========================
@@ -34,18 +32,10 @@ const int SOIL_DRY = 2590;
 const int SOIL_WET = 900;
 
 // =========================
-//  DAY / NIGHT thresholds
-// =========================
-const int LUX_JOUR = 1500;
-const int LUX_NUIT = 1000;
-
-// =========================
 //  TIMINGS
 // =========================
-const uint32_t SEND_JOUR_MS      = 30UL * 1000UL; // jour: toutes les 30s
-const uint32_t SLEEP_NUIT_S      = 1800;          // nuit: 30 min
+const uint32_t SEND_JOUR_MS      = 30UL * 1000UL; // envoi toutes les 30s
 const uint32_t WIFI_RETRY_MS     = 60UL * 1000UL; // 1 essai/min
-const int NIGHT_STREAK_REQUIRED  = 3;
 
 // =========================
 WiFiClient espClient;
@@ -139,23 +129,6 @@ bool ensureNetwork() {
 }
 
 // =========================
-// Power / Night
-// =========================
-bool isNightFromLum(int lumRaw) {
-  if (lumRaw <= LUX_NUIT) return true;
-  if (lumRaw >= LUX_JOUR) return false;
-  return false; // zone grise => jour (IMPORTANT)
-}
-
-void deepSleepNight() {
-  Serial.println("Deep sleep NUIT (30 min)");
-  wifiOffClean();
-  esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_NUIT_S * uS_TO_S_FACTOR);
-  delay(200);
-  esp_deep_sleep_start();
-}
-
-// =========================
 // Publish
 // =========================
 void publishOnce(const char* modeLabel) {
@@ -176,7 +149,7 @@ void publishOnce(const char* modeLabel) {
 
   String payload = "{";
   payload += "\"id\":\"" + String(SONDE_ID) + "\"";
-  payload += ",\"mode\":\"" + String(modeLabel) + "\"";
+  payload += ",\"mode\":\"" + String(modeLabel) + "\"";  // ✅ CORRIGÉ
 
   if (dhtErr == SimpleDHTErrSuccess) {
     payload += ",\"temp\":" + String((int)t);
@@ -213,14 +186,14 @@ void setup() {
   Serial.println(SONDE_ID);
 }
 
+// ✅ LOOP SIMPLIFIÉ : envoi toutes les 30s, pas de deep sleep
 void loop() {
   static unsigned long lastWifiTry = 0;
-  static unsigned long lastSendDay = 0;
-  static int nightStreak = 0;
+  static unsigned long lastSend = 0;
 
   client.loop();
 
-  // PRIORITÉ réseau
+  // Tentative réseau max 1 fois/min
   if (!netReady) {
     if (millis() - lastWifiTry >= WIFI_RETRY_MS || lastWifiTry == 0) {
       lastWifiTry = millis();
@@ -228,37 +201,17 @@ void loop() {
       netReady = ensureNetwork();
       if (netReady) {
         Serial.println("== RESEAU OK ==");
-        lastSendDay = 0;
-        nightStreak = 0;
+        lastSend = 0;
       }
     }
     delay(50);
     return;
   }
 
-  int lum = analogRead(PIN_LDR);
-  bool isNight = isNightFromLum(lum);
-
-  if (isNight) {
-    publishOnce("night");
-    deepSleepNight();
-  }
-
-  if (millis() - lastSendDay >= SEND_JOUR_MS || lastSendDay == 0) {
-    lastSendDay = millis();
-
-    Serial.print("Lum = ");
-    Serial.println(lum);
-
-    if (lum <= LUX_NUIT) nightStreak++;
-    else nightStreak = 0;
-
-    publishOnce("day");
-
-    if (nightStreak >= NIGHT_STREAK_REQUIRED) {
-      publishOnce("night");
-      deepSleepNight();
-    }
+  // Envoi toutes les 30 secondes
+  if (millis() - lastSend >= SEND_JOUR_MS || lastSend == 0) {
+    lastSend = millis();
+    publishOnce("day");   // label simple
   }
 
   delay(50);
