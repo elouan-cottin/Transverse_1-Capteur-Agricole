@@ -149,7 +149,7 @@ void publishOnce(const char* modeLabel) {
 
   String payload = "{";
   payload += "\"id\":\"" + String(SONDE_ID) + "\"";
-  payload += ",\"mode\":\"" + String(modeLabel) + "\"";  // ✅ CORRIGÉ
+  payload += ",\"mode\":\"" + String(modeLabel) + "\"";
 
   if (dhtErr == SimpleDHTErrSuccess) {
     payload += ",\"temp\":" + String((int)t);
@@ -186,7 +186,6 @@ void setup() {
   Serial.println(SONDE_ID);
 }
 
-// ✅ LOOP SIMPLIFIÉ : envoi toutes les 30s, pas de deep sleep
 void loop() {
   static unsigned long lastWifiTry = 0;
   static unsigned long lastSend = 0;
