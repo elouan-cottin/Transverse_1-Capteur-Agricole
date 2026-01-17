@@ -1,0 +1,19 @@
+void setup() {
+  Serial.begin(115200);
+}
+
+void loop() {
+  int val = analogRead(A0);         // valeur brute 0–1023
+  float pourcent = map(val, 1023, 200, 0, 100); // à ajuster (voir calibration)
+
+  if (pourcent < 0) pourcent = 0;
+  if (pourcent > 100) pourcent = 100;
+
+  Serial.print("Brut = ");
+  Serial.print(val);
+  Serial.print(" | Humidité = ");
+  Serial.print(pourcent);
+  Serial.println(" %");
+
+  delay(1000);
+}
