@@ -1,0 +1,13 @@
+[Unit]
+Description=Dashboard API (Flask)
+After=network.target
+
+[Service]
+User=dcrasp
+WorkingDirectory=/home/dcrasp/dashboard
+ExecStart=/home/dcrasp/dashboard/.venv/bin/python /home/dcrasp/dashboard/api.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=MQTT Collector to SQLite
+After=network.target mosquitto.service
+
+[Service]
+User=dcrasp
+WorkingDirectory=/home/dcrasp/dashboard
+ExecStart=/home/dcrasp/dashboard/.venv/bin/python /home/dcrasp/dashboard/collector.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
