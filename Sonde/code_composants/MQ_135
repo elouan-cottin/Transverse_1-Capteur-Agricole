@@ -1,0 +1,86 @@
+// MQ-135 (module) -> AO sur GPIO35 (ou 34)
+// Alim du module: 5V + GND
+// IMPORTANT: Ce code donne un indicateur RELATIF, pas des ppm CO2 fiables.
+
+const int MQ_PIN = 35;                 // ADC
+const unsigned long SAMPLE_MS = 200;   // période d'échantillonnage
+const int AVG_WINDOW = 20;             // moyenne glissante (20*200ms = 4s)
+
+int samples[AVG_WINDOW];
+int idx = 0;
+long sum = 0;
+
+bool baselineReady = false;
+unsigned long t0;
+long baselineSum = 0;
+int baselineCount = 0;
+int baseline = 0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  t0 = millis();
+
+  // init buffer
+  int v = analogRead(MQ_PIN);
+  for (int i = 0; i < AVG_WINDOW; i++) {
+    samples[i] = v;
+    sum += v;
+  }
+
+  Serial.println("MQ135: chauffe 60s pour baseline... (ne pas souffler dessus)");
+}
+
+int readAvg() {
+  int v = analogRead(MQ_PIN);
+
+  // update moving average
+  sum -= samples[idx];
+  samples[idx] = v;
+  sum += v;
+  idx = (idx + 1) % AVG_WINDOW;
+
+  return (int)(sum / AVG_WINDOW);
+}
+
+void loop() {
+  static unsigned long last = 0;
+  if (millis() - last < SAMPLE_MS) return;
+  last = millis();
+
+  int mq = readAvg();
+
+  // Construire la baseline pendant 60s
+  if (!baselineReady) {
+    baselineSum += mq;
+    baselineCount++;
+
+    if (millis() - t0 >= 60000) { // 60s
+      baseline = (int)(baselineSum / baselineCount);
+      baselineReady = true;
+      Serial.print("Baseline = ");
+      Serial.println(baseline);
+      Serial.println("Lecture en cours...");
+    } else {
+      Serial.print("Chauffe/baseline... mq=");
+      Serial.println(mq);
+    }
+    return;
+  }
+
+  // Indice relatif (différence par rapport à la baseline)
+  int delta = mq - baseline;
+
+  // Alerte simple (à ajuster)
+  const int THRESHOLD = 250; // ajuste selon ton environnement
+
+  Serial.print("mq=");
+  Serial.print(mq);
+  Serial.print("  baseline=");
+  Serial.print(baseline);
+  Serial.print("  delta=");
+  Serial.print(delta);
+
+  if (delta > THRESHOLD) Serial.print("  -> AIR CHARGE / ALERTE");
+  Serial.println();
+}
