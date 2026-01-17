@@ -1,0 +1,16 @@
+:root {
+    --bg: #0b1220;
+    --text: #e6ecff;
+    --muted: #9fb0d6;
+
+    --border: rgba(255, 255, 255, .08);
+    --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+
+    --radius: 16px;
+    --pad: 14px;
+    --gap: 14px;
+
+    --ok: #2ecc71;
+    --warn: #f1c40f;
+    --bad: #e74c3c;
+}

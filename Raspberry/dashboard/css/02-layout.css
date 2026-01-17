@@ -1,0 +1,159 @@
+/* TOPBAR */
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(11, 18, 32, .72);
+    backdrop-filter: blur(10px);
+}
+
+.brand {
+    display: flex;
+    gap: 10px;
+    align-items: center
+}
+
+.logo {
+    font-size: 22px;
+}
+
+.logo_cap {
+    width: 32px;
+    height: 32px;
+}
+
+.title {
+    font-weight: 800;
+    letter-spacing: .2px
+}
+
+.subtitle {
+    font-size: 12px;
+    color: var(--muted)
+}
+
+.topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px
+}
+
+/* MQTT status */
+.status-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .03);
+}
+
+.status-pill .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 4px rgba(46, 204, 113, .15);
+}
+
+.status-pill[data-state="warn"] .dot {
+    background: var(--warn);
+    box-shadow: 0 0 0 4px rgba(241, 196, 15, .15)
+}
+
+.status-pill[data-state="bad"] .dot {
+    background: var(--bad);
+    box-shadow: 0 0 0 4px rgba(231, 76, 60, .15)
+}
+
+.status-pill .label {
+    font-size: 13px;
+    color: var(--muted)
+}
+
+/* LAYOUT */
+.layout {
+    padding: 16px;
+    gap: var(--gap);
+    align-items: start;
+}
+
+.layout-3 {
+    display: grid;
+    grid-template-columns: 320px 1fr 360px;
+}
+
+/* ✅ BUG FIX IMPORTANT:
+   permet au centre de ne PAS s'élargir à cause du carousel (max-content) */
+.main {
+    min-width: 0;
+}
+
+.table-wrap {
+    min-width: 0;
+}
+
+@media (max-width: 1200px) {
+    .layout-3 {
+        grid-template-columns: 1fr;
+    }
+
+    .side.left {
+        order: 1;
+    }
+
+    .main {
+        order: 2;
+    }
+
+    .side.right {
+        order: 3;
+    }
+}
+
+/* section header */
+.section-head {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    margin: 4px 2px 10px;
+}
+
+.section-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* grid charts */
+.grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--gap);
+    margin-top: var(--gap);
+}
+
+@media (max-width: 900px) {
+    .grid2 {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* =========================
+   LAYOUT Z-INDEX FIX
+   ========================= */
+
+.topbar,
+.layout,
+.main,
+.side {
+    position: relative;
+    /*z-index: 1;*/
+    /* contenu au-dessus du fond */
+}

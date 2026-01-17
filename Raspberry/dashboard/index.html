@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="fr">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Capteur Agricole — Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- CSS split (adapte si tes chemins diffèrent) -->
+    <link rel="stylesheet" href="./css/00-vars.css">
+    <link rel="stylesheet" href="./css/01-base.css">
+    <link rel="stylesheet" href="./css/02-layout.css">
+    <link rel="stylesheet" href="./css/03-components.css">
+    <link rel="stylesheet" href="./css/04-filter.css">
+    <link rel="stylesheet" href="./css/05-carousel.css">
+    <link rel="stylesheet" href="./css/06-status.css">
+    <link rel="stylesheet" href="./css/07-alerts.css">
+    <link rel="stylesheet" href="./css/08-table.css">
+    <link rel="stylesheet" href="./css/09-charts.css">
+</head>
+
+<body>
+    <!-- HEADER -->
+    <header class="topbar">
+        <div class="brand">
+            <div class="logo"><img class='logo_cap' src="logo.png" alt=""></div>
+            <div>
+                <div class="title">Capteur Agricole</div>
+                <div class="subtitle">Dashboard</div>
+            </div>
+        </div>
+
+        <div class="topbar-right">
+            <div class="status-pill" id="mqttStatus" data-state="ok" title="État simulé">
+                <span class="dot"></span>
+                <span class="label">MQTT: Connecté</span>
+            </div>
+
+            <div class="filter">
+                <button class="filter-btn" id="filterBtn" type="button">
+                    Sondes : <span id="filterSummary">Toutes</span> ▾
+                </button>
+
+                <div class="filter-popover" id="filterPopover" aria-hidden="true">
+                    <div class="filter-head">
+                        <div class="filter-title">Filtrer les sondes</div>
+                        <div class="filter-actions">
+                            <button class="ghost" id="selectAllBtn" type="button">Tout</button>
+                            <button class="ghost" id="selectNoneBtn" type="button">Aucun</button>
+                        </div>
+                    </div>
+
+                    <div class="filter-list" id="filterList"></div>
+
+                    <div class="filter-foot">
+                        <button class="primary" id="applyFilterBtn" type="button">Appliquer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN LAYOUT: gauche / centre / droite -->
+    <main class="layout layout-3">
+
+        <!-- COLONNE GAUCHE : STATUS SONDES -->
+        <aside class="side left">
+            <div class="card block">
+                <div class="block-head">
+                    <h3>Status sondes</h3>
+                    <span class="pill" id="statusCount">0</span>
+                </div>
+
+                <div class="status-list" id="statusList"></div>
+            </div>
+        </aside>
+
+        <!-- CENTRE : CONTENU -->
+        <section class="main">
+            <div class="section-head">
+                <h2>Vue d’ensemble</h2>
+                <div class="section-actions">
+                    <!--<button class="ghost" id="simulateAddBtn" type="button">+ Simuler nouvelle sonde</button>-->
+                    <div class="range-switch" id="rangeSwitch" aria-label="Plage graphique">
+                        <button class="range-btn active" data-range="1h" type="button">1h</button>
+                        <button class="range-btn" data-range="12h" type="button">12h</button>
+                        <button class="range-btn" data-range="24h" type="button">24h</button>
+                        <button class="range-btn" data-range="7d" type="button">1 semaine</button>
+                        <button class="range-btn" data-range="30d" type="button">1 mois</button>
+                    </div>
+
+                    <div class="muted" id="lastUpdate">Dernière mise à jour : --</div>
+                </div>
+            </div>
+
+            <!-- CAROUSEL scrollable + drag -->
+            <div class="card carousel" id="carousel" title="Clique-glisse pour défiler">
+                <div class="carousel-track" id="carouselTrack"></div>
+            </div>
+
+            <!-- GRAPHIQUES 24h -->
+            <div class="grid2">
+                <div class="card block chart-card">
+                    <div class="block-head">
+                        <h3>Humidité sol</h3>
+                        <span class="pill">24h</span>
+                    </div>
+                    <canvas id="chartSoil"></canvas>
+                </div>
+
+                <div class="card block chart-card">
+                    <div class="block-head">
+                        <h3>Température</h3>
+                        <span class="pill">24h</span>
+                    </div>
+                    <canvas id="chartTemp"></canvas>
+                </div>
+
+                <div class="card block chart-card">
+                    <div class="block-head">
+                        <h3>Qualité de l’air (MQ)</h3>
+                        <span class="pill">24h</span>
+                    </div>
+                    <canvas id="chartMQ"></canvas>
+                </div>
+
+                <div class="card block chart-card">
+                    <div class="block-head">
+                        <h3>Luminosité</h3>
+                        <span class="pill">24h</span>
+                    </div>
+                    <canvas id="chartLum"></canvas>
+                </div>
+            </div>
+
+            <!-- Table -->
+            <div class="card block" style="margin-top:14px;">
+                <div class="block-head">
+                    <h3>Dernières mesures</h3>
+                    <span class="pill" id="tableCount">0 ligne(s)</span>
+                </div>
+
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Sonde</th>
+                                <th>Temp</th>
+                                <th>Hum air</th>
+                                <th>Soil %</th>
+                                <th>Lum raw</th>
+                                <th>MQ Δ</th>
+                                <th>Dernière trame</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- COLONNE DROITE : ALERTES -->
+        <aside class="side right">
+            <div class="card block">
+                <div class="block-head">
+                    <h3>Alertes</h3>
+                    <div class="side-actions">
+                        <button class="ghost" id="ackAllBtn" type="button">Tout vu</button>
+                    </div>
+                </div>
+
+                <div class="tabs">
+                    <button class="tab active" id="tabActive" type="button">Actives</button>
+                    <button class="tab" id="tabHistory" type="button">Historique</button>
+                </div>
+
+                <div class="alerts" id="alerts"></div>
+            </div>
+        </aside>
+
+    </main>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="./app.js"></script>
+</body>
+
+</html>
