@@ -1,6 +1,3 @@
-// Test Capteur Qualité Air Grove 101020078
-// ESP8266 (Wemos D1 Mini / NodeMCU)
-
 void setup() {
   Serial.begin(115200);
   delay(2000);
@@ -12,7 +9,6 @@ void loop() {
   Serial.print("Valeur brute : ");
   Serial.print(sensorValue);
 
-  // Interprétation simple
   String air;
 
   if(sensorValue < 50) air = "Air très propre";
