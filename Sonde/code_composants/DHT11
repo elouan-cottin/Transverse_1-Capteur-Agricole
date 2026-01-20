@@ -1,6 +1,5 @@
 #include <SimpleDHT.h>
 
-// DHT11 data pin
 int pinDHT11 = 4;
 SimpleDHT11 dht11(pinDHT11);
 
