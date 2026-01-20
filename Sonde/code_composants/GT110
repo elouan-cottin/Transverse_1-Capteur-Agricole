@@ -3,8 +3,8 @@ void setup() {
 }
 
 void loop() {
-  int val = analogRead(A0);         // valeur brute 0–1023
-  float pourcent = map(val, 1023, 200, 0, 100); // à ajuster (voir calibration)
+  int val = analogRead(A0);
+  float pourcent = map(val, 1023, 200, 0, 100);
 
   if (pourcent < 0) pourcent = 0;
   if (pourcent > 100) pourcent = 100;
