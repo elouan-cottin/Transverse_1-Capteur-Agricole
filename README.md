@@ -1,4 +1,4 @@
-# Dashboard et Sonde – Capteur Agricole (ESP32 / Raspberry Pi)
+# Dashboard et Sonde – Capteur Agricole (ESP32 / Raspberry Pi) - ESIEE-IT
 
 Projet de sonde connectée permettant la collecte, le stockage, l’analyse et la visualisation de données environnementales (température, humidité de l’air, humidité du sol, luminosité, qualité de l’air).
 
