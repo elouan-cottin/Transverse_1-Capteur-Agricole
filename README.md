@@ -1,6 +1,6 @@
 # Dashboard et Sonde – Capteur Agricole (ESP32 / Raspberry Pi)
 
-Projet de supervision IoT permettant la **collecte, le stockage, l’analyse et la visualisation** de données environnementales (température, humidité de l’air, humidité du sol, luminosité, qualité de l’air).
+Projet de sonde connectée permettant la collecte, le stockage, l’analyse et la visualisation de données environnementales (température, humidité de l’air, humidité du sol, luminosité, qualité de l’air).
 
 L’architecture repose sur :
 - des **sondes ESP32**
