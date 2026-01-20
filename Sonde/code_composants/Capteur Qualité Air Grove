@@ -5,7 +5,7 @@ void setup() {
 }
 
 void loop() {
-  int sensorValue = analogRead(A0); // 0 → 1023
+  int sensorValue = analogRead(A0);
   Serial.print("Valeur brute : ");
   Serial.print(sensorValue);
 
