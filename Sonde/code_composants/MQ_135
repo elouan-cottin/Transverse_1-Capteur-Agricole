@@ -1,8 +1,4 @@
-// MQ-135 (module) -> AO sur GPIO35 (ou 34)
-// Alim du module: 5V + GND
-// IMPORTANT: Ce code donne un indicateur RELATIF, pas des ppm CO2 fiables.
-
-const int MQ_PIN = 35;                 // ADC
+const int MQ_PIN = 35;  
 const unsigned long SAMPLE_MS = 200;   // période d'échantillonnage
 const int AVG_WINDOW = 20;             // moyenne glissante (20*200ms = 4s)
 
@@ -68,10 +64,8 @@ void loop() {
     return;
   }
 
-  // Indice relatif (différence par rapport à la baseline)
   int delta = mq - baseline;
 
-  // Alerte simple (à ajuster)
   const int THRESHOLD = 250; // ajuste selon ton environnement
 
   Serial.print("mq=");
