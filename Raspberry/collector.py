@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from paho.mqtt import client as mqtt
 
-MQTT_HOST = "127.0.0.1"   # mosquitto tourne sur le Pi
+MQTT_HOST = "127.0.0.1" 
 MQTT_PORT = 1883
 MQTT_USER = "dashboard"
 MQTT_PASS = "dashboard"
